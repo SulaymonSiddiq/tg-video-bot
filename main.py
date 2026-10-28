@@ -8,7 +8,7 @@ from aiohttp import web
 import yt_dlp
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://your-app-name.onrender.com")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") # Render beradigan tashqi URL
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN topilmadi!")
@@ -17,7 +17,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Progress hook - Telegram botda foiz va tezlikni yangilab borish uchun
 def make_progress_hook(status_msg, loop):
     last_percent = [""]
     def hook(d):
@@ -45,7 +44,7 @@ def download_video(url: str, output_path: str, status_msg, loop) -> str:
         'merge_output_format': 'mp4',
         'quiet': True,
         'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'progress_hooks': [make_progress_hook(status_msg, loop)],
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -59,7 +58,7 @@ def download_video(url: str, output_path: str, status_msg, loop) -> str:
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("Xush kelibsiz! Menga istalgan video havolasini yuboring (IDM kabi yuklab beraman).")
+    await message.answer("Xush kelibsiz! Menga video havolasini yuboring, IDM kabi yuklab beraman.")
 
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def handle_url(message: types.Message):
@@ -79,24 +78,31 @@ async def handle_url(message: types.Message):
         await status_msg.delete()
     except Exception as e:
         logging.error(f"Xatolik: {e}")
-        await status_msg.edit_text("❌ Videoni yuklab bo'lmadi. Havola yaroqsiz yoki sayt himoyalangan.")
+        await status_msg.edit_text("❌ Videoni yuklab bo'lmadi. Havola yaroqsiz yoki himoyalangan.")
     finally:
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
 
 async def on_startup(bot: Bot):
-    webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
-    await bot.set_webhook(webhook_url)
+    if RENDER_EXTERNAL_URL:
+        webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
+        await bot.set_webhook(webhook_url)
+        logging.info(f"Webhook o'rnatildi: {webhook_url}")
 
 def main():
-    dp.startup.register(on_startup)
-    app = web.Application()
-    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
-    webhook_requests_handler.register(app, path="/webhook")
-    setup_application(app, dp, bot=bot)
-    
-    port = int(os.environ.get("PORT", 10000))
-    web.run_app(app, host="0.0.0.0", port=port)
+    if RENDER_EXTERNAL_URL:
+        # Render serverida ishlasa - Webhook rejimi
+        dp.startup.register(on_startup)
+        app = web.Application()
+        webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+        webhook_requests_handler.register(app, path="/webhook")
+        setup_application(app, dp, bot=bot)
+        
+        port = int(os.environ.get("PORT", 10000))
+        web.run_app(app, host="0.0.0.0", port=port)
+    else:
+        # Kompyuterda ishlasa - Oddiy Polling rejimi
+        asyncio.run(dp.start_polling(bot))
 
 if __name__ == "__main__":
     main()

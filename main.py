@@ -19,7 +19,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Vaqtinchalik oqimlar bazasi
 user_streams = {}
 
 def make_progress_hook(status_msg, loop):
@@ -96,15 +95,14 @@ def download_video(url: str, output_path: str, status_msg, loop) -> str:
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("Xush kelibsiz! Menga video havolasini yuboring, barcha oqimlarni topib beraman.")
+    await message.answer("Xush kelibsiz! Menga video havolasini yuboring.")
 
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def handle_url(message: types.Message):
     url = message.text.strip()
-    status_msg = await message.answer("🔍 IDM sniffer yordamida sayt tahlil qilinmoqda, kuting...")
+    status_msg = await message.answer("🔍 Sayt tahlil qilinmoqda, kuting...")
     
     streams = await sniff_video_streams(url)
-    
     if not streams:
         streams = [url]
 
@@ -119,15 +117,15 @@ async def handle_url(message: types.Message):
 
     await status_msg.edit_text(
         f"✅ **Tahlil yakunlandi!**\n\n"
-        f"🔍 Topilgan oqimlar soni: **{len(streams)} ta**\n"
-        f"Quyidagi tugmalardan birini bosing:",
+        f"🔍 Topilgan oqimlar: **{len(streams)} ta**\n"
+        f"Yuklab olish uchun tugmani bosing:",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
 
 @dp.callback_query(F.data.startswith("dl_"))
 async def process_download(callback: types.CallbackQuery):
-    await callback.answer() # Tugma bosilgandagi aylanishni to'xtatish uchun
+    await callback.answer("⏳ Yuklab olish navbatga qo'shildi...")
     user_id = callback.from_user.id
     
     if user_id not in user_streams:
@@ -143,10 +141,13 @@ async def process_download(callback: types.CallbackQuery):
 
     selected_url = streams[index]
     status_msg = callback.message
-    
-    await status_msg.edit_text("⏳ Yuklab olish boshlanmoqda...")
+    await status_msg.edit_text("⏳ Yuklab olish boshlandi...")
 
-    file_prefix = f"downloads/vid_{user_id}_{callback.message.message_id}"
+    # Og'ir yuklab olish jarayonini fon vazifasiga (background task) qo'shamiz
+    asyncio.create_task(run_download_task(selected_url, user_id, status_msg, callback.bot))
+
+async def run_download_task(selected_url, user_id, status_msg, bot_instance):
+    file_prefix = f"downloads/vid_{user_id}_{status_msg.message_id}"
     os.makedirs("downloads", exist_ok=True)
     loop = asyncio.get_running_loop()
 
@@ -154,7 +155,7 @@ async def process_download(callback: types.CallbackQuery):
     try:
         file_path = await loop.run_in_executor(None, download_video, selected_url, file_prefix, status_msg, loop)
         
-        await status_msg.edit_text("📤 Video Telegram serveriga yuborilmoqda...")
+        await status_msg.edit_text("📤 Telegramga yuborilmoqda...")
 
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if file_size_mb > 2000:
@@ -162,7 +163,8 @@ async def process_download(callback: types.CallbackQuery):
             return
 
         video_file = types.FSInputFile(file_path)
-        await callback.message.answer_video(
+        await bot_instance.send_video(
+            chat_id=status_msg.chat.id,
             video=video_file,
             caption="✅ Videongiz muvaffaqiyatli yuklab olindi!"
         )
@@ -188,12 +190,7 @@ async def on_startup(bot: Bot):
 def main():
     if RENDER_EXTERNAL_URL:
         app = web.Application()
-        
-        # Webhook handler to'g'ri ulanishi uchun
-        webhook_requests_handler = SimpleRequestHandler(
-            dispatcher=dp,
-            bot=bot,
-        )
+        webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
         webhook_requests_handler.register(app, path="/webhook")
         setup_application(app, dp, bot=bot)
         

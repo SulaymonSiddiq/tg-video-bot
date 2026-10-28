@@ -2,3 +2,4 @@ aiogram==3.13.1
 yt-dlp
 aiohttp>=3.9.5
 pydantic>=2.9.0
+playwright

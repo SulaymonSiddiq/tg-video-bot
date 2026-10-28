@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Foydalanuvchilar topgan oqimlarini vaqtincha saqlash uchun lug'at
+# Vaqtinchalik oqimlar bazasi
 user_streams = {}
 
 def make_progress_hook(status_msg, loop):
@@ -43,7 +43,6 @@ async def safe_edit_text(msg, text):
         pass
 
 async def sniff_video_streams(webpage_url: str):
-    """Sahifadagi barcha video oqimlarini (.m3u8, .mp4) ushlab qoluvchi sniffer"""
     found_streams = []
     try:
         async with async_playwright() as p:
@@ -97,7 +96,7 @@ def download_video(url: str, output_path: str, status_msg, loop) -> str:
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("Xush kelibsiz! Menga video havolasini yuboring, men barcha oqimlarni topib ro'yxat tuzib beraman.")
+    await message.answer("Xush kelibsiz! Menga video havolasini yuboring, barcha oqimlarni topib beraman.")
 
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def handle_url(message: types.Message):
@@ -107,12 +106,10 @@ async def handle_url(message: types.Message):
     streams = await sniff_video_streams(url)
     
     if not streams:
-        # Agar sniffer topolmasa, yt-dlp ga urinib ko'ramiz
         streams = [url]
 
     user_streams[message.from_user.id] = streams
 
-    # Tugmalar yaratamiz
     builder = InlineKeyboardBuilder()
     for idx, stream in enumerate(streams, 1):
         ext = "m3u8" if "m3u8" in stream else "mp4"
@@ -123,23 +120,25 @@ async def handle_url(message: types.Message):
     await status_msg.edit_text(
         f"✅ **Tahlil yakunlandi!**\n\n"
         f"🔍 Topilgan oqimlar soni: **{len(streams)} ta**\n"
-        f"Quyidagi tugmalardan birini bosing va yuklab olishni boshlang:",
+        f"Quyidagi tugmalardan birini bosing:",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
 
 @dp.callback_query(F.data.startswith("dl_"))
 async def process_download(callback: types.CallbackQuery):
+    await callback.answer() # Tugma bosilgandagi aylanishni to'xtatish uchun
     user_id = callback.from_user.id
+    
     if user_id not in user_streams:
-        await callback.answer("❌ Ma'lumot eskirgan. Iltimos, havolani qaytadan yuboring.", show_alert=True)
+        await callback.message.answer("❌ Ma'lumot eskirgan. Havolani qaytadan yuboring.")
         return
 
     index = int(callback.data.split("_")[1])
     streams = user_streams[user_id]
     
     if index >= len(streams):
-        await callback.answer("❌ Xatolik yuz berdi.", show_alert=True)
+        await callback.message.answer("❌ Xatolik yuz berdi.")
         return
 
     selected_url = streams[index]
@@ -157,10 +156,9 @@ async def process_download(callback: types.CallbackQuery):
         
         await status_msg.edit_text("📤 Video Telegram serveriga yuborilmoqda...")
 
-        # Fayl hajmini tekshirish (Telegram limiti 2GB)
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if file_size_mb > 2000:
-            await status_msg.edit_text("❌ Fayl hajmi 2 GB dan katta, Telegram uni yubora olmaydi!")
+            await status_msg.edit_text("❌ Fayl hajmi 2 GB dan katta!")
             return
 
         video_file = types.FSInputFile(file_path)
@@ -175,7 +173,6 @@ async def process_download(callback: types.CallbackQuery):
         await status_msg.edit_text(f"❌ Xatolik yuz berdi:\n`{str(e)}`", parse_mode="Markdown")
 
     finally:
-        # Faylni faqat yuborib bo'lingandan keyin o'chiramiz
         if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -186,14 +183,21 @@ async def on_startup(bot: Bot):
     if RENDER_EXTERNAL_URL:
         webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
         await bot.set_webhook(webhook_url)
+        logging.info(f"Webhook o'rnatildi: {webhook_url}")
 
 def main():
     if RENDER_EXTERNAL_URL:
-        dp.startup.register(on_startup)
         app = web.Application()
-        webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+        
+        # Webhook handler to'g'ri ulanishi uchun
+        webhook_requests_handler = SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+        )
         webhook_requests_handler.register(app, path="/webhook")
         setup_application(app, dp, bot=bot)
+        
+        dp.startup.register(on_startup)
         
         port = int(os.environ.get("PORT", 10000))
         web.run_app(app, host="0.0.0.0", port=port)
